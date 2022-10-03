@@ -12,6 +12,7 @@ from calendar import monthrange
 """
 USERNAME = os.getenv('USERNAME')
 PASSWORD = os.getenv('PASSWORD')
+ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
 
 FROM_YYYY = os.getenv('FROM_YYYY')
 FROM_MM = os.getenv('FROM_MM')
@@ -55,15 +56,19 @@ def get_data(option, usage_date=None):
     # start session
     s = requests.session()
 
-    url = "https://api.epb.com/web/api/v1/login/"
-    payload = "{\n    \"grant_type\": \"PASSWORD\",\n    \"password\": \"" + PASSWORD + "\",\n    \"username\": \"" + USERNAME + "\"\n}"
-    headers = {'Content-Type': 'application/json'}
-    r = s.post(url, headers=headers, data=payload)
+    if not ACCESS_TOKEN:
+        url = "https://api.epb.com/web/api/v1/login/"
+        payload = "{\n    \"grant_type\": \"PASSWORD\",\n    \"password\": \"" + PASSWORD + "\",\n    \"username\": \"" + USERNAME + "\"\n}"
+        headers = {'Content-Type': 'application/json'}
+        r = s.post(url, headers=headers, data=payload)
 
-    if r.status_code != 200:
-        print(f'Failed to login: {r.status_code}')
+        if r.status_code != 200:
+            print(f'Failed to login: {r.status_code}')
 
-    access_token = r.json()['tokens']['access']['token']
+        access_token = r.json()['tokens']['access']['token']
+    else:
+        access_token = ACCESS_TOKEN
+
     safe_access_key = urllib.parse.quote_plus(access_token)
 
     url = f"https://api.epb.com/web/api/v1/usage/power/permanent/{option}/download"
