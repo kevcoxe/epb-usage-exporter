@@ -1,3 +1,9 @@
 *.csv
 
 data/
+venv/
+
+influxdb-storage/
+influxdb/
+
+.env

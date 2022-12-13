@@ -1,10 +1,16 @@
+from ast import Or
 import os
 import pandas
 import requests
 import urllib.parse
 import warnings
 
-from datetime import datetime
+# influx
+from influxdb_client import InfluxDBClient
+from influxdb_client.client.write_api import SYNCHRONOUS, WriteOptions, WriteType
+from influxdb_client.domain.write_precision import WritePrecision
+
+from datetime import date, datetime, timedelta
 from calendar import monthrange
 
 """
@@ -19,6 +25,17 @@ FROM_MM = os.getenv('FROM_MM')
 
 TO_YYYY = os.getenv('TO_YYYY')
 TO_MM = os.getenv('TO_MM')
+
+BUCKET = os.getenv("DOCKER_INFLUXDB_INIT_BUCKET")
+ORG = os.getenv("DOCKER_INFLUXDB_INIT_ORG")
+TOKEN = os.getenv("DOCKER_INFLUXDB_INIT_ADMIN_TOKEN")
+HOST = os.getenv("DOCKER_INFLUXDB_INIT_HOST")
+PORT = os.getenv("DOCKER_INFLUXDB_INIT_PORT")
+URL = os.getenv("DOCKER_INFLUXDB_URL", "http://localhost:8086")
+
+RUN_YESTERDAY = os.getenv("RUN_YESTERDAY", False)
+
+WRITE_TO_FILE = os.getenv("WRITE_TO_FILE", False)
 
 
 """
@@ -108,18 +125,52 @@ def get_monthly():
 def export_data(input, filename):
     warnings.simplefilter("ignore")
 
-    # read an excel file and convert
-    # into a dataframe object
-    df = pandas.DataFrame(pandas.read_excel(input, sheet_name=1, engine="openpyxl"))
-    # show the dataframe
+    try:
+        # read an excel file and convert
+        # into a dataframe object
+        df = pandas.DataFrame(pandas.read_excel(input, sheet_name=1, engine="openpyxl"))
+        # show the dataframe
+    except Exception as e:
+        print(e)
+        return
 
-    if filename:
+    if filename and WRITE_TO_FILE:
         # write out to file
         df.to_csv(f'{filename}', index=False, header=True)
     else:
         print(df)
 
+    if filename:
+        with InfluxDBClient(url=URL, token=TOKEN, org=ORG) as client:
+            write_options = WriteOptions(write_type=WriteType.batching)
+            write_api = client.write_api(write_options=write_options)
 
+            for idx, record in enumerate(df.to_dict('records')):
+                kwh = float(record['Primary Cycle Estimated Power Use'].replace("kWh",''))
+                dictionary = {
+                    "measurement": "usage",
+                    "fields": {"kWh": kwh},
+                    "time": record['Primary Cycle Date']
+                }
+                write_api.write(BUCKET, ORG, dictionary, write_precision=WritePrecision.S)
+
+                cost = float(record['Primary Cycle Estimated Cost'].replace("$",""))
+                dictionary = {
+                    "measurement": "usage",
+                    "fields": {"cost": cost},
+                    "time": record['Primary Cycle Date']
+                }
+                write_api.write(BUCKET, ORG, dictionary, write_precision=WritePrecision.S)
+
+                temp = float(record['Primary Cycle Average Air Temperature'][:-2]) if type(record['Primary Cycle Average Air Temperature']) is str else None
+                dictionary = {
+                    "measurement": "usage",
+                    "fields": {"temp": temp},
+                    "time": record['Primary Cycle Date']
+                }
+                write_api.write(BUCKET, ORG, dictionary, write_precision=WritePrecision.S)
+
+            write_api.close()
 
 def load_months_of_data(from_yyyy, from_mm, to_yyyy, to_mm, to_dd=None):
     dates = []
@@ -133,8 +184,13 @@ def load_months_of_data(from_yyyy, from_mm, to_yyyy, to_mm, to_dd=None):
         get_hourly(usage_date=d)
 
 
+def load_yesterday():
+    yesterday = date.today() - timedelta(days = 1)
+    get_hourly(usage_date=yesterday.strftime('%Y-%m-%d'))
+
+
 if __name__ == "__main__":
-    if FROM_YYYY and FROM_MM and TO_YYYY and TO_MM:
+    if FROM_YYYY and FROM_MM and TO_YYYY and TO_MM and not RUN_YESTERDAY:
         load_months_of_data(
             from_yyyy=int(FROM_YYYY),
             from_mm=int(FROM_MM),
@@ -142,7 +198,6 @@ if __name__ == "__main__":
             to_mm=int(TO_MM)
         )
     else:
-        get_monthly()
-    # get_hourly()
-    # get_daily()
+        print("loading yesterdays data")
+        load_yesterday()
 
